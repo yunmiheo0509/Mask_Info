@@ -3,10 +3,15 @@ package com.example.maskinfo;
 import androidx.annotation.ColorRes;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.lifecycle.Observer;
+import androidx.lifecycle.ViewModelProvider;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import android.Manifest;
+import android.annotation.SuppressLint;
 import android.graphics.Color;
+import android.location.Location;
 import android.os.Bundle;
 import android.text.Layout;
 import android.util.Log;
@@ -17,10 +22,16 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import com.example.maskinfo.model.Store;
 import com.example.maskinfo.model.StoreInfo;
 import com.example.maskinfo.repository.MaskService;
+import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.tasks.OnSuccessListener;
+import com.gun0912.tedpermission.PermissionListener;
+import com.gun0912.tedpermission.TedPermission;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -35,52 +46,77 @@ import retrofit2.converter.moshi.MoshiConverterFactory;
 public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = MainActivity.class.getSimpleName();
+    private MainViewModel viewModel;
+    private FusedLocationProviderClient fusedLocationClient;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+        viewModel = new ViewModelProvider(this).get(MainViewModel.class);
+
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
+        PermissionListener permissionlistener = new PermissionListener() {
+            @Override
+            public void onPermissionGranted() {
+                performAction();
+            }
+
+            @Override
+            public void onPermissionDenied(List<String> deniedPermissions) {
+                Toast.makeText(MainActivity.this, "Permission Denied\n" + deniedPermissions.toString(), Toast.LENGTH_SHORT).show();
+            }
+        };
+        TedPermission.with(this)
+                .setPermissionListener(permissionlistener)
+                .setDeniedMessage("If you reject permission,you can not use this service\n\nPlease turn on permissions at [Setting] > [Permission]")
+                .setPermissions(Manifest.permission.ACCESS_FINE_LOCATION)
+                .check();
+
+
+    }
+
+    @SuppressLint("MissingPermission")
+    private void performAction() {
+        fusedLocationClient.getLastLocation()
+                .addOnFailureListener(this,e->{
+                    Log.e(TAG, "PerformAction", e.getCause());
+                })
+                .addOnSuccessListener(this, location -> {
+                    // Got last known location. In some rare situations this can be null.
+                    Log.d(TAG, "performAction " + location);
+
+                    if (location != null) {
+                        // Logic to handle location object
+                        Log.d(TAG, "getLatitude: " + location.getLatitude());
+                        Log.d(TAG, "getLongitude: " + location.getLongitude());
+
+                        viewModel.location = location;
+                        viewModel.fetchStoreInfo(); //데이터 받으면 펫치하는걸로 함.
+                        // oncreate에서 그냥 실행하면 계속 화면 돌릴때마다 재전송 되는데 그걸 막음
+
+                    }
+                });
         RecyclerView recyclerView = findViewById(R.id.recycler_view);
-
         recyclerView.setLayoutManager(new LinearLayoutManager(this, RecyclerView.VERTICAL, false));
-
         final StoreAdapter adapter = new StoreAdapter();
         recyclerView.setAdapter(adapter);
 
-        Retrofit retrofit = new Retrofit.Builder()
-                .baseUrl(MaskService.BASE_URL)
-                .addConverterFactory(MoshiConverterFactory.create())
-                .build();
-
-        MaskService service = retrofit.create(MaskService.class);
-        Call<StoreInfo> storeInfoCall = service.fetchStoreInfo();
-        storeInfoCall.enqueue(new Callback<StoreInfo>() {
-            @Override
-            public void onResponse(Call<StoreInfo> call, Response<StoreInfo> response) {
-                List<Store> items = response.body().getStores();
-
-                //아래에서 자바8의 스트림이용안하면 이렇게 한다.
-//                List<Store> result = new ArrayList<>();{
-//                    for (int i = 0; i < items.size(); i++) {
-//                        Store store = items.get(i);
-//                        if (store.getRemainStat() != null) {
-//                            result.add(store);
-//                        }
-//                    }
-//                }
-
-                adapter.updateItems(items.stream().filter(item -> item.getRemainStat() != null)
-                        .collect(Collectors.toList()));
-                getSupportActionBar().setTitle("마스크 재고 있는 곳: " + items.size() + "곳");
-            }
-
-            @Override
-            public void onFailure(Call<StoreInfo> call, Throwable t) {
-                Log.e(TAG, "onFailure", t);
-            }
+        //ui변경 감지 업데이트
+        viewModel.itemLiveData.observe(this, stores -> {
+            adapter.updateItems(stores);
+            getSupportActionBar().setTitle("마스크 재고 있는 곳" + stores.size());
         });
 
+
+        viewModel.loadingLiveData.observe(this,isLoading ->{
+            if (isLoading) {
+                findViewById(R.id.progressBar).setVisibility(View.VISIBLE);
+            }else {
+                findViewById(R.id.progressBar).setVisibility(View.GONE);
+            }
+        });
     }
 
     @Override
@@ -95,7 +131,8 @@ public class MainActivity extends AppCompatActivity {
         // Handle item selection
         switch (item.getItemId()) {
             case R.id.action_refresh:
-//                newGame();
+                //새로고침 누르면 데이터 요청
+                viewModel.fetchStoreInfo();
                 return true;
             default:
                 return super.onOptionsItemSelected(item);
@@ -142,7 +179,7 @@ public class MainActivity extends AppCompatActivity {
             Store store = mItems.get(position);
             holder.nameTextView.setText(store.getName());
             holder.addressTextView.setText(store.getAddr());
-            holder.distanceTextView.setText("1.0");
+            holder.distanceTextView.setText(String.format("%.2fkm",store.getDistance()));
 
             String count = "100개 이상";
             String remainStat = "충분";

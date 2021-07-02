@@ -5,7 +5,7 @@ import com.squareup.moshi.Json;
 //import javax.annotation.Generated;
 //
 //@Generated("jsonschema2pojo")
-public class Store {
+public class Store implements Comparable <Store>{
 
     @com.squareup.moshi.Json(name = "addr")
     private String addr;
@@ -25,6 +25,16 @@ public class Store {
     private String stockAt;
     @com.squareup.moshi.Json(name = "type")
     private String type;
+
+    private double distance;
+
+    public double getDistance() {
+        return distance;
+    }
+
+    public void setDistance(double distance) {
+        this.distance = distance;
+    }
 
     public String getAddr() {
         return addr;
@@ -98,4 +108,8 @@ public class Store {
         this.type = type;
     }
 
+    @Override
+    public int compareTo(Store o) {
+        return Double.compare(distance,o.distance);
+    }
 }
